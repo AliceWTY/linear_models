@@ -37,6 +37,8 @@ Although hypothesis tests provide a way to compare nested linear models, in many
 
 We’ll start with a simulated example. The code chunk below generates data under a non-linear model. I like to use this setting because “model complexity” is easiest for me to understand when I can see it.
 
+#### simulate data - a non-linear data frame
+
 ```{r}
 nonlin_df = 
   tibble(
@@ -53,8 +55,10 @@ nonlin_df %>%
 
 Spliting this data into training data and testing data (using `anti_join`), and replot it to show the split. Our goal will be to use the *training data (in black)* to build candidate models, and then see how those models predict in the *testing data (in red)*.
 
+`anti_join(nonlin_df, train_df, by = "id")` taking the obs that in in `nonlin_df` but not `train_df` by `id`. Both train_df and test_df are nested data in nonlin_df.
+
 ```{r}
-train_df = sample_n(nonlin_df, 80)
+train_df = sample_n(nonlin_df, size = 80)
 test_df = anti_join(nonlin_df, train_df, by = "id")
 
 ggplot(train_df, aes(x = x, y = y)) + 
@@ -64,7 +68,7 @@ ggplot(train_df, aes(x = x, y = y)) +
 ```
 
 
-Fitting three models to the *training data (black)*. I’m going to use `mgcv::gam` for non-linear models (this is my go-to package for “additive models”, and I much prefer it to e.g. polynomial models.) For today, you don’t have to know what this means, how `gam` works, or why I prefer it – just know that **we’re putting smooth lines through data clouds, and we can control how smooth we want the fit to be**.
+Fitting three models to the *training data (black)*. I’m going to use `mgcv::gam` for non-linear models (this is my go-to package for “generalized additive models (gam)”, and I much prefer it to e.g. polynomial models.) For today, you don’t have to know what this means, how `gam` works, or why I prefer it – just know that **we’re putting smooth lines through data clouds, and we can control how smooth we want the fit to be**.
 
 The three models below have very different levels of complexity and aren’t nested, so testing approaches for nested model don’t apply.
 
@@ -73,6 +77,12 @@ linear_mod = lm(y ~ x, data = train_df)
 smooth_mod = mgcv::gam(y ~ s(x), data = train_df)
 wiggly_mod = mgcv::gam(y ~ s(x, k = 30), sp = 10e-6, data = train_df)
 ```
+
+In `mgcv::gam()`:
+
+* `s(x)` smooth function of x
+* `k` is the dimension of the basis used to represent the smooth term. Exact choice of k is not generally critical: it should be chosen to be large enough to have enough degrees of freedom to represent the underlying ‘truth’ reasonably well, but small enough to maintain reasonable computational efficiency. 
+* `sp` is the smooth parameter, where `sp = 10e-6` means it is completely not smmoth
 
 To understand what these models have done, I’ll plot the two `gam` fits.
 
@@ -109,8 +119,9 @@ Put differently:
 * the linear model is too simple and, no matter what training data we use, will never capture the true relationship between variables. It will be consistently wrong due to its simplicity, therefore it's biased. 
 * The wiggly fit, on the other hand, is chasing data points and will change a lot from one training dataset to the the next. It will be consistently wrong due to its complexity, and is therefore highly variable.
 
+### look at prediction accuracy - MSEs
 
-As a next step in my CV procedure, I’ll compute root mean squared errors (RMSEs) for each model.
+As a next step in my CV procedure, I’ll compute root mean squared errors (RMSEs) for each model, using `rmse(model, data)`
 
 ```{r}
 rmse(linear_mod, test_df)
@@ -133,6 +144,8 @@ cv_df =
 ```
 
 `crossv_mc` tries to be smart about memory, rather than repeating the dataset a bunch of times. It saves the data once and stores the indexes for each training/testing split using a `resample` object. This can be coerced to a dataframe, and can often be treated exactly like a dataframe. However, it’s not compatible with `gam`, so we have to convert each training and testing dataset (and lose that nice memory-saving stuff in the process) using the code below. It’s worth noting that if all the models you want to fit use `lm`, you can skip this.
+
+`cv_df %>% pull(train) %>% .[[1]] %>% as_tibble`: pull `train` out from the `cv_df` data frame, then look at the first element in each `train` and combine them into a data frame through `as_tibble`.
 
 ```{r}
 cv_df %>% pull(train) %>% .[[1]] %>% as_tibble
@@ -194,13 +207,23 @@ child_growth %>%
   geom_point(alpha = .5)
 ```
 
-The plots suggests some non-linearity, especially at the low end of the weight distribution. We’ll try three models: **a linear fit**, **a piece-wise linear fit**, and **a smooth fit** using `gam`. For the piece-wise linear fit, we need to add a “change point term” to our dataframe. (Like additive models, for now it’s not critical that you understand everything about a piecewise linear fit – we’ll see a plot of the results soon, and the intuition from that is enough for our purposes.)
+The plots suggests some non-linearity, especially at the low end of the weight distribution. We’ll try three models: **a linear fit**, **a piece-wise linear fit**, and **a smooth fit** using `gam`. 
+
+For the piece-wise linear fit, we need to add a “change point term” to our dataframe. (Like additive models, for now it’s not critical that you understand everything about a piecewise linear fit – we’ll see a plot of the results soon, and the intuition from that is enough for our purposes.)
 
 ```{r}
 child_growth =
   child_growth %>% 
   mutate(weight_cp = (weight > 7) * (weight - 7))
 ```
+
+`weight_cp = (weight > 7) * (weight - 7)` : the weight changing point variable, `weight_cp`, is defined as (whether weight is bigger than 7)*(weight-7). 
+
+For example:
+
+* if weight = 12.8, then weight_cp = 1(12.8-7) = 5.8
+* if weight = 5.4, then weight_cp = 0(5.4-7) = 0
+
 
 The code chunk below fits each of the candidate models to the full dataset. The piecewise linear model is nested in the linear model and could be assessed using statistical significance, but the smooth model is not nested in anything else.
 
