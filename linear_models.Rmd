@@ -60,6 +60,7 @@ fit = lm(price ~ stars + borough, data = nyc_airbnb)
 ```
 
 Let's look at the results.
+The output of a `lm` is a very specific list that isn’t a data frame but that can be manipulated using other functions. 
 
 ```{r}
 fit
@@ -81,8 +82,9 @@ fitted.values(fit)
 residuals(fit)
 ```
 
-Let's look at the results better.
-Note: they are data frames.
+Let's look at the results better. 
+
+The `broom` package has functions for obtaining a quick summary of the model and for cleaning up the coefficient table. Note: both of these functions produce data frames, which makes it straightforward to include the results in subsequent steps.
 
 ```{r}
 broom::glance(fit)
@@ -97,6 +99,8 @@ broom::tidy(fit) %>%
     ) %>% 
   knitr::kable(digits = 3)
 ```
+
+As an aside, `broom::tidy` works with lots of things, including most of the functions for model fitting you’re likely to run into (survival, mixed models, additive models, …).
 
 
 ## Be in controls of factors
@@ -126,6 +130,72 @@ broom::glance(fit)
 
 See the graph again, we notice the order of `borough` changed. Manhattan has the most rentals, followed by Brooklyn, Queens, and Bronx. Additionally, we fit the linear model again, Manhattan is the reference group now. The estimators changed. However, we check `broom::glance(fit)`, the model r-sq, AIC, BIC etc. stay the same.
 
+
+## Diagnositics
+
+Regression diagnostics can identify issues in model fit, especially related to certain failures in model assumptions. Examining residuals and fitted values are therefore an imporant component of any modeling exercise.
+
+The `modelr` package can be used to add residuals and fitted values to a data frame.
+
+Note: `modelr::add_residuals(data, model)`
+
+```{r}
+modelr::add_residuals(nyc_airbnb, fit)
+modelr::add_predictions(nyc_airbnb, fit)
+```
+
+
+Like many things in the tidyverse, the first argument is a dataframe. That makes it easy to included steps adding residuals or predictions in pipeline of commands to conduct inspections and perform diagnostics.
+
+### Exploratory diagnositics examples
+Looking at the distribution of residuals in each of the `borough`'s. We found that some obvious issues, most notably the presence of extremely large outliers in price and a generally skewed residual distribution.
+```{r}
+nyc_airbnb %>% 
+  modelr::add_residuals(fit) %>% 
+  ggplot(aes(x = borough, y = resid)) + 
+  geom_violin() +
+  ylim(-500, 1500)
+```
+
+From this following graph, we observed that, in Manhattan, residuals has spread out quite a bit (a lot of outliers which contribute to the skewness) when the stars goes up. Similiar parttern is observed in Brooklyn. Queens has one outlier and we should check on that.
+
+```{r}
+nyc_airbnb %>% 
+  modelr::add_residuals(fit) %>% 
+  ggplot(aes(x = stars, y = resid)) + 
+  geom_point() +
+  facet_wrap(. ~ borough)
+
+```
+
+
+
+## Hypothesis Test
+
+This does t-test by default.
+
+```{r}
+fit %>% 
+  broom::tidy()
+```
+
+What about the significance of `borough` (testing the 3 variables at the same time)? We want F-test or ANOVA.
+
+To do that we need to fit a null model and an alternative model (your current model).
+
+```{r}
+fit_null = lm(price ~ stars, data = nyc_airbnb)
+fit_alt = lm(price ~ stars + borough, data = nyc_airbnb)
+
+anova(fit_null, fit_alt)
+```
+
+We can try to tidy it a bit.
+
+```{r}
+anova(fit_null, fit_alt) %>% 
+  broom::tidy()
+```
 
 
 
