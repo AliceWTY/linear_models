@@ -198,5 +198,149 @@ anova(fit_null, fit_alt) %>%
 ```
 
 
+## Nest data, fit models
+
+We’ll now turn our attention to fitting models to datasets nested within variables – meaning, essentially, that we’ll use `nest` to create a list column containing datasets and fit separate models to each. This is very different from fitting nested models, even though the terminology is similar.
+
+In the airbnb data, we might think that star ratings and room type affects price differently in each borough. **One way to allow this kind of effect modification is through interaction terms:**
+
+```{r}
+nyc_airbnb %>% 
+  lm(price ~ stars * borough + room_type * borough, data = .) %>% 
+  broom::tidy() %>% 
+  knitr::kable(digits = 3)
+
+```
+
+This works, but the output takes time to think through – the expected change in price comparing an entire apartment to a private room in Queens, for example, involves the main effect of room type and the Queens / private room interaction.
+
+
+Alternatively, we can nest within boroughs and fit borough-specific models associating price with rating and room type. This is more exploratory but easier to understand.
+
+```{r}
+nest_lm_res =
+  nyc_airbnb %>% 
+  nest(data = -borough) %>% 
+  mutate(
+    models = map(data, ~lm(price ~ stars + room_type, data = .x)),
+    results = map(models, broom::tidy)) %>% 
+  select(-data, -models) %>% 
+  unnest(results)
+```
+
+Note:
+
+* `nest(data = -borough)` nest everything expect `borough`
+* mapping, `map(data_entry, ~function)`
+
+
+Showing the results in wide format.
+
+```{r}
+nest_lm_res %>% 
+  select(borough, term, estimate) %>% 
+  mutate(term = fct_inorder(term)) %>% 
+  pivot_wider(
+    names_from = term, 
+    values_from = estimate) %>% 
+  knitr::kable(digits = 3)
+```
+
+Fitting models to nested datasets is a way of performing **stratified analyses**. These have a tradeoff: stratified models make it easy to interpret covariate effects in each stratum, but *don’t provide a mechanism for assessing the significance of differences across strata*.
+
+
+An even more extreme example is the assessment of neighborhood effects in Manhattan. The code chunk below fits neighborhood-specific models:
+
+```{r}
+manhattan_nest_lm_res =
+  nyc_airbnb %>% 
+  filter(borough == "Manhattan") %>% 
+  nest(data = -neighborhood) %>% 
+  mutate(
+    models = map(data, ~lm(price ~ stars + room_type, data = .x)),
+    results = map(models, broom::tidy)) %>% 
+  select(-data, -models) %>% 
+  unnest(results)
+```
+
+Showing neighborhood-specific estimates for the coefficients related to room type. We found that there is, generally speaking, a reduction in room price for a private room or a shared room compared to an entire apartment, but this varies quite a bit across neighborhoods.
+
+```{r}
+manhattan_nest_lm_res %>% 
+  filter(str_detect(term, "room_type")) %>% 
+  ggplot(aes(x = neighborhood, y = estimate)) + 
+  geom_point() + 
+  facet_wrap(~term) + 
+  theme(axis.text.x = element_text(angle = 80, hjust = 1))
+```
+
+Note:
+
+* `str_detect(term, "room_type")` detect data that start with "room_type" in the `term` variable
+* `theme(axis.text.x = element_text(angle = 80, hjust = 1))` rotating and spacing exis labels in `ggplot2`
+
+
+### mixed model
+
+With this many factor levels, it really isn’t a good idea to fit models with main effects or interactions for each. Instead, you’d be best-off using a **mixed model**, with **random intercepts and slopes for each neighborhood**. Although it’s well beyond the scope of this class, code to fit a mixed model with neighborhood-level random intercepts and random slopes for room type is below. And, of course, we can tidy the results using a mixed-model spinoff of the `broom` package.
+
+Mixed-effects models are called “mixed” because they simultaneously model fixed and random effects.
+
+```{r eval=FALSE}
+manhattan_airbnb =
+nyc_airbnb %>% 
+  filter(borough == "Manhattan") %>% 
+  lme4::lmer(price ~ stars + room_type + (1 + room_type | neighborhood), data = .)%>% 
+  broom.mixed::tidy()
+```
+
+
+
+## Binary Outcomes
+
+Linear models are appropriate for outcomes that follow a continuous distribution, but **binary outcomes** are common. In these cases, **logistic regression** is a useful analytic framework.
+
+The Washington Post has gathered data on homicides in 50 large U.S. cities and made the data available through a GitHub repository. We’ll use data on unresolved murders in Baltimore, MD to illustrate logistic regression in R. The code below imports, cleans, and generally wrangles the data for analysis.
+
+```{r}
+baltimore_df = 
+  read_csv("data/homicide-data.csv") %>% 
+  filter(city == "Baltimore") %>% 
+  mutate(
+    resolved = as.numeric(disposition == "Closed by arrest"),
+    victim_age = as.numeric(victim_age),
+    victim_race = fct_relevel(victim_race, "White")) %>% 
+  select(resolved, victim_age, victim_race, victim_sex)
+```
+
+Using these data, we can fit a logistic regression for the binary “resolved” outcome and victim demographics as predictors. This uses the `glm` function with the `family=assumed_distribution` specified to account for the non-Gaussian outcome distribution.
+
+```{r}
+fit_logistic = 
+  baltimore_df %>% 
+  glm(resolved ~ victim_age + victim_race + victim_sex, data = ., family = binomial()) 
+```
+
+
+Many of the same tools we used to work with `lm` fits can be used for `glm` fits. The table below summaries the coefficients from the model fit; because logistic model estimates are log odds ratios, we **include a step to compute odds ratios** as well.
+
+```{r}
+fit_logistic %>% 
+  broom::tidy() %>% 
+  mutate(OR = exp(estimate)) %>%
+  select(term, log_OR = estimate, OR, p.value) %>% 
+  knitr::kable(digits = 3)
+```
+
+Homicides in which the victim is Black are substantially less likely to be resolved that those in which the victim is white; for other races the effects are not significant, possible due to small sample sizes. Homicides in which the victim is male are significantly less like to be resolved than those in which the victim is female. The effect of age is statistically significant, but careful data inspections should be conducted before interpreting too deeply.
+
+
+We can also compute fitted values; similarly to the estimates in the model summary, these are expressed as log odds and can be transformed to produce probabilities for each subject. Note: the `pred` is the odds, we want to transfer it into probabilities.
+
+```{r}
+baltimore_df %>% 
+  modelr::add_predictions(fit_logistic) %>% 
+  mutate(fitted_prob = boot::inv.logit(pred))
+```
 
 
